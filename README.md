@@ -22,9 +22,9 @@ External LED + button on a Raspberry Pi Pico W, with structured logging and cras
 ## To-Do list
 
 - [x] blink external led.
+- [x] button press logs an event over USB.
+- [ ] structured logging via defmt.
 - [ ] implement debouncer.
-- [ ] button press logs an event over USB.
-- [ ] structered logging via defmt.
 - [ ] crash report using panic-persist.
 - [ ] reboot and flash using button instead of BOOTSEL.
 
