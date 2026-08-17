@@ -2,14 +2,18 @@
 #![no_main]
 
 use cortex_m_rt::entry;
-use embedded_hal::{delay::DelayNs, digital::OutputPin};
+use embedded_hal::digital::OutputPin;
 
 use panic_halt as _;
 
 use hal::{
-    clocks::init_clocks_and_plls, gpio::Pins, pac, sio::Sio, timer::Timer, watchdog::Watchdog,
+    clocks::init_clocks_and_plls, gpio::Pins, pac, sio::Sio, timer::Timer, usb::UsbBus,
+    watchdog::Watchdog,
 };
 use rp2040_hal::{self as hal};
+
+use usb_device::{class_prelude::*, prelude::*};
+use usbd_serial::SerialPort;
 
 /// Second-stage bootloader. Required: the RP2040 boot ROM reads this first
 /// to know how to talk to QSPI flash. Without it, the chip can't validate
@@ -55,13 +59,38 @@ fn main() -> ! {
     let mut led = pins.gpio13.into_push_pull_output();
 
     //Timer
-    let mut timer = Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
+    let timer = Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
+    //USB comms
+    let usb_bus = UsbBusAllocator::new(UsbBus::new(
+        pac.USBCTRL_REGS,
+        pac.USBCTRL_DPRAM,
+        clocks.usb_clock,
+        true,
+        &mut pac.RESETS,
+    ));
+    let mut serial = SerialPort::new(&usb_bus);
+    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
+        .strings(&[StringDescriptors::new(LangID::EN).product("blinky-plus")])
+        .unwrap()
+        .device_class(usbd_serial::USB_CLASS_CDC)
+        .build();
 
+    let mut led_on = false;
+    let mut last_toggle = 0u64;
     loop {
-        led.set_high().unwrap();
-        timer.delay_ms(500);
+        usb_dev.poll(&mut [&mut serial]);
 
-        led.set_low().unwrap();
-        timer.delay_ms(500);
+        let now = timer.get_counter().ticks();
+        if now - last_toggle >= 500_000 {
+            last_toggle = now;
+            led_on = !led_on;
+            if led_on {
+                let _ = serial.write(b"on\n");
+                led.set_high().unwrap();
+            } else {
+                let _ = serial.write(b"off\n");
+                led.set_low().unwrap();
+            }
+        }
     }
 }
