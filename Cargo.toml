@@ -17,6 +17,7 @@ usb-device = "0.3"
 usbd-serial = "0.2"
 
 panic-persist = "0.3"
+panic-halt = "1"
 rp2040-boot2 = "0.3.0"
 
 
