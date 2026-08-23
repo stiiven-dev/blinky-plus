@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 mod debouncer;
-use debouncer::{Debouncer, Edge};
+use debouncer::{ButtonEvent, ButtonMonitor};
 
 use core::cell::RefCell;
 use cortex_m_rt::entry;
@@ -22,6 +22,12 @@ use usbd_serial::SerialPort;
 
 type UsbState = (UsbDevice<'static, UsbBus>, SerialPort<'static, UsbBus>);
 static USB_STATE: Mutex<RefCell<Option<UsbState>>> = Mutex::new(RefCell::new(None));
+
+const BLINK_TICKS: u64 = 500_000;
+// --- Button-triggered behavior tuning (timer ticks = microseconds) ---
+const DEBOUNCE_TICKS: u64 = 20_000;
+const MULTI_CLICKS_WINDOW_TICKS: u64 = 400_000;
+const HOLD_TICKS: u64 = 1_500_000;
 
 struct DefmtUsbWriter;
 
@@ -127,7 +133,15 @@ fn main() -> ! {
     let mut led_on = false;
     let mut last_toggle = 0u64;
     let now0 = timer.get_counter().ticks();
-    let mut button = Debouncer::new(button_pin, true, 20_000, now0).unwrap();
+    let mut button = ButtonMonitor::new(
+        button_pin,
+        true,
+        DEBOUNCE_TICKS,
+        MULTI_CLICKS_WINDOW_TICKS,
+        HOLD_TICKS,
+        now0,
+    )
+    .unwrap();
     loop {
         critical_section::with(|cs| {
             if let Some((usb_dev, serial)) = USB_STATE.borrow_ref_mut(cs).as_mut() {
@@ -136,11 +150,19 @@ fn main() -> ! {
         });
         let now = timer.get_counter().ticks();
         match button.update(now).unwrap() {
-            Edge::Pressed => defmt::info!("button pressed"),
-            Edge::Released => defmt::info!("button released"),
-            Edge::None => {}
+            ButtonEvent::HoldTriggered => {
+                defmt::info!("button held should reboot on this");
+            }
+            ButtonEvent::Clicks(n) if n >= 3 => {
+                defmt::info!("should panic on this");
+            }
+            ButtonEvent::Clicks(n) => {
+                defmt::info!("clicked {} time(s)", n);
+            }
+            ButtonEvent::None => {}
         }
-        if now - last_toggle >= 500_000 {
+
+        if now - last_toggle >= BLINK_TICKS {
             last_toggle = now;
             led_on = !led_on;
             if led_on {

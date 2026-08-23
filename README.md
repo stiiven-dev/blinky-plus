@@ -12,7 +12,7 @@ External LED + button on a Raspberry Pi Pico W, with structured logging and cras
 
 ## Features
 
-- External LED blink at a rate set by a `const` (no onboard-LED trickery — see [Known limitations](#known-limitations)).
+- External LED blink at a rate set by a `BLINK_TICKS` (no onboard-LED trickery — see [Known limitations](#known-limitations)).
 - Button press logs an event over USB-serial and toggles a mode.
 - Structured logging via [`defmt`](https://defmt.ferrous-systems.com/), carried over USB-CDC serial instead of RTT — works with zero extra hardware.
 - Crash reporting via [`panic-persist`](https://docs.rs/panic-persist): panic messages survive a reset and print on the next boot.
@@ -24,7 +24,7 @@ External LED + button on a Raspberry Pi Pico W, with structured logging and cras
 - [x] blink external led.
 - [x] button press logs an event over USB.
 - [x] structured logging via defmt.
-- [ ] implement debouncer.
+- [x] implement debouncer.
 - [ ] crash report using panic-persist.
 - [ ] reboot and flash using button instead of BOOTSEL.
 
@@ -82,9 +82,9 @@ You should see the LED blinking, a log line on every button press, and a boot ba
 
 ### Try the panic-persist demo
 
-Press and hold the button for 3 seconds — this deliberately triggers a panic in `src/main.rs` (see the `debug_panic_after_hold` function) so you can see crash reporting work end-to-end:
+Press the button 3 times or more — this deliberately triggers a panic in `src/main.rs` (see the `debug_panic_after_hold` function) so you can see crash reporting work end-to-end:
 
-1. Hold the button 3s → firmware panics and resets.
+1. Press the button 3 times or more → firmware panics and resets.
 2. On the next boot, the recovered panic message prints first, before the normal boot banner.
 3. Release the button; the board returns to normal blinking.
 
@@ -97,28 +97,20 @@ main.rs
 ├── init: USB device + CDC-ACM serial, defmt-serial transport
 ├── init: check for a persisted panic message, print it if present
 ├── idle loop:
-│   ├── poll button (debounced) → log edge, toggle mode
+│   ├── poll button (debounced) → log edge
 │   ├── hold-check → reset_to_usb_boot() or debug_panic_after_hold()
-│   └── blink LED at MODE-dependent rate
+│   └── blink LED at a fixed 'BLINK_TICKS' rate
 ```
 
 Everything lives in `main.rs` for this project — it's intentionally small. Later projects in this series split hardware-facing code from host-testable core logic; `blinky-plus` is the template that establishes the tooling (CI, logging, panic capture) those projects build on.
 
-## Testing
-
-```bash
-cargo test --target x86_64-unknown-linux-gnu   # host tests: debounce logic
-cargo clippy --workspace --all-features -- -D warnings
-cargo fmt --all -- --check
-```
-
-The debounce state machine (`src/debounce.rs`) is the only pure logic in this project and is unit-tested on the host — no hardware needed to run it. Everything else (LED timing, button wiring, panic-persist behavior) needs a real board; there's no hardware-in-the-loop test in this project yet
+The debounce implementation (`src/debounce.rs`) is the only pure logic in this project and is unit-tested on the host — no hardware needed to run it. Everything else (LED timing, button wiring, panic-persist behavior) needs a real board; there's no hardware-in-the-loop test in this project yet
 
 ## Known limitations
 
 - The onboard LED (tied to the CYW43439 Wi-Fi chip) is **not** used here — bringing it up requires the `cyw43` PIO/SPI stack, which is out of scope for a first project. An external LED is used instead. See the [roadmap](../embedded-rust-rp2040-roadmap-no-probe.md) §1.1.
 - No SWD debug probe support in this build. Logging and panic capture are USB-serial based; there's no live breakpoint/step debugging. See the roadmap §2.9 for what changes if a probe is added later.
-- Debounce timing (`Debouncer<N>`) is tuned for a generic tactile button; adjust `N` if you're using a noisier switch.
+- Debounce timing (`Debouncer`) is tuned for a generic tactile button; adjust `DEBOUNCE_TICKS` if you're using a noisier switch.
 
 ## License
 
