@@ -1,8 +1,11 @@
 #![no_std]
 #![no_main]
 
+use core::cell::RefCell;
 use cortex_m_rt::entry;
+use critical_section::Mutex;
 use embedded_hal::digital::OutputPin;
+use static_cell::StaticCell;
 
 use panic_halt as _;
 
@@ -14,6 +17,41 @@ use rp2040_hal::{self as hal};
 
 use usb_device::{class_prelude::*, prelude::*};
 use usbd_serial::SerialPort;
+
+type UsbState = (UsbDevice<'static, UsbBus>, SerialPort<'static, UsbBus>);
+static USB_STATE: Mutex<RefCell<Option<UsbState>>> = Mutex::new(RefCell::new(None));
+
+struct DefmtUsbWriter;
+
+impl embedded_io::ErrorType for DefmtUsbWriter {
+    type Error = core::convert::Infallible;
+}
+
+impl embedded_io::Write for DefmtUsbWriter {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        critical_section::with(|cs| {
+            if let Some((usb_dev, serial)) = USB_STATE.borrow_ref_mut(cs).as_mut() {
+                usb_dev.poll(&mut [serial]); // service the endpoint so buffered bytes actually flush
+                if !serial.dtr() {
+                    // No host terminal attached — drop the log instead of risking a stall.
+                    return Ok(buf.len());
+                }
+                match serial.write(buf) {
+                    Ok(n) => Ok(n),
+                    Err(_) => Ok(buf.len()), // still never claim 0 progress — avoid retry loops upstream
+                }
+            } else {
+                Ok(buf.len())
+            }
+        })
+    }
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+static WRITER: StaticCell<DefmtUsbWriter> = StaticCell::new();
+static USB_BUS: StaticCell<UsbBusAllocator<UsbBus>> = StaticCell::new();
 
 /// Second-stage bootloader. Required: the RP2040 boot ROM reads this first
 /// to know how to talk to QSPI flash. Without it, the chip can't validate
@@ -61,34 +99,44 @@ fn main() -> ! {
     //Timer
     let timer = Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
     //USB comms
-    let usb_bus = UsbBusAllocator::new(UsbBus::new(
+    let usb_bus = USB_BUS.init(UsbBusAllocator::new(UsbBus::new(
         pac.USBCTRL_REGS,
         pac.USBCTRL_DPRAM,
         clocks.usb_clock,
         true,
         &mut pac.RESETS,
-    ));
-    let mut serial = SerialPort::new(&usb_bus);
-    let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
+    )));
+    let serial = SerialPort::new(usb_bus);
+    let usb_dev = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x16c0, 0x27dd))
         .strings(&[StringDescriptors::new(LangID::EN).product("blinky-plus")])
         .unwrap()
         .device_class(usbd_serial::USB_CLASS_CDC)
         .build();
 
+    critical_section::with(|cs| {
+        *USB_STATE.borrow_ref_mut(cs) = Some((usb_dev, serial));
+    });
+
+    defmt_serial::defmt_serial(WRITER.init(DefmtUsbWriter));
+    defmt::info!("blinky-plus up!");
+
     let mut led_on = false;
     let mut last_toggle = 0u64;
     loop {
-        usb_dev.poll(&mut [&mut serial]);
-
+        critical_section::with(|cs| {
+            if let Some((usb_dev, serial)) = USB_STATE.borrow_ref_mut(cs).as_mut() {
+                usb_dev.poll(&mut [serial]);
+            }
+        });
         let now = timer.get_counter().ticks();
         if now - last_toggle >= 500_000 {
             last_toggle = now;
             led_on = !led_on;
             if led_on {
-                let _ = serial.write(b"on\n");
+                defmt::info!("on !");
                 led.set_high().unwrap();
             } else {
-                let _ = serial.write(b"off\n");
+                defmt::info!("off !");
                 led.set_low().unwrap();
             }
         }
