@@ -1,5 +1,7 @@
 #![no_std]
 #![no_main]
+mod debouncer;
+use debouncer::{Debouncer, Edge};
 
 use core::cell::RefCell;
 use cortex_m_rt::entry;
@@ -95,6 +97,8 @@ fn main() -> ! {
 
     //GPIO13 as led (pin 17)
     let mut led = pins.gpio13.into_push_pull_output();
+    //GPIO12 as button (pin 16)
+    let button_pin = pins.gpio12.into_pull_up_input();
 
     //Timer
     let timer = Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
@@ -122,6 +126,8 @@ fn main() -> ! {
 
     let mut led_on = false;
     let mut last_toggle = 0u64;
+    let now0 = timer.get_counter().ticks();
+    let mut button = Debouncer::new(button_pin, true, 20_000, now0).unwrap();
     loop {
         critical_section::with(|cs| {
             if let Some((usb_dev, serial)) = USB_STATE.borrow_ref_mut(cs).as_mut() {
@@ -129,6 +135,11 @@ fn main() -> ! {
             }
         });
         let now = timer.get_counter().ticks();
+        match button.update(now).unwrap() {
+            Edge::Pressed => defmt::info!("button pressed"),
+            Edge::Released => defmt::info!("button released"),
+            Edge::None => {}
+        }
         if now - last_toggle >= 500_000 {
             last_toggle = now;
             led_on = !led_on;

@@ -74,6 +74,7 @@ Once it's running, watch the logs in a second terminal:
 
 ```bash
 socat /dev/ttyACM1,rawer,b115200 STDOUT | defmt-print -e target/thumbv6m-none-eabi/release/blinky-plus
+#it could be on ttyACM0
 # (Windows/macOS: point defmt-print at the matching COM/tty port instead)
 ```
 
