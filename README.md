@@ -25,7 +25,7 @@ External LED + button on a Raspberry Pi Pico W, with structured logging and cras
 - [x] button press logs an event over USB.
 - [x] structured logging via defmt.
 - [x] implement debouncer.
-- [ ] crash report using panic-persist.
+- [x] crash report using panic-persist.
 - [ ] reboot and flash using button instead of BOOTSEL.
 
 ## Hardware
@@ -73,11 +73,10 @@ cargo run --release
 Once it's running, watch the logs in a second terminal:
 
 ```bash
-socat /dev/ttyACM1,rawer,b115200 STDOUT | defmt-print -e target/thumbv6m-none-eabi/release/blinky-plus
-#it could be on ttyACM0
-# (Windows/macOS: point defmt-print at the matching COM/tty port instead)
+./watch-defmt.sh
 ```
 
+run this script so you don't miss any log even after disconnecting or panic
 You should see the LED blinking, a log line on every button press, and a boot banner with the firmware version and git hash.
 
 ### Try the panic-persist demo

@@ -9,7 +9,7 @@ use critical_section::Mutex;
 use embedded_hal::digital::OutputPin;
 use static_cell::StaticCell;
 
-use panic_halt as _;
+use panic_persist as _;
 
 use hal::{
     clocks::init_clocks_and_plls, gpio::Pins, pac, sio::Sio, timer::Timer, usb::UsbBus,
@@ -39,22 +39,30 @@ impl embedded_io::Write for DefmtUsbWriter {
     fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
         critical_section::with(|cs| {
             if let Some((usb_dev, serial)) = USB_STATE.borrow_ref_mut(cs).as_mut() {
-                usb_dev.poll(&mut [serial]); // service the endpoint so buffered bytes actually flush
-                if !serial.dtr() {
-                    // No host terminal attached — drop the log instead of risking a stall.
-                    return Ok(buf.len());
-                }
+                usb_dev.poll(&mut [serial]);
                 match serial.write(buf) {
                     Ok(n) => Ok(n),
-                    Err(_) => Ok(buf.len()), // still never claim 0 progress — avoid retry loops upstream
+                    Err(_) => Ok(buf.len()),
                 }
             } else {
                 Ok(buf.len())
             }
         })
     }
+
     fn flush(&mut self) -> Result<(), Self::Error> {
         Ok(())
+    }
+}
+
+fn wait_for_usb_settle(timer: &Timer, settle_ticks: u64) {
+    let start = timer.get_counter().ticks();
+    while timer.get_counter().ticks() - start < settle_ticks {
+        critical_section::with(|cs| {
+            if let Some((usb_dev, serial)) = USB_STATE.borrow_ref_mut(cs).as_mut() {
+                usb_dev.poll(&mut [serial]);
+            }
+        });
     }
 }
 
@@ -128,7 +136,13 @@ fn main() -> ! {
     });
 
     defmt_serial::defmt_serial(WRITER.init(DefmtUsbWriter));
+
+    wait_for_usb_settle(&timer, 3_000_000);
     defmt::info!("blinky-plus up!");
+
+    if let Some(msg) = panic_persist::get_panic_message_utf8() {
+        defmt::error!("previous boot panicked: {}", msg);
+    }
 
     let mut led_on = false;
     let mut last_toggle = 0u64;
@@ -154,7 +168,7 @@ fn main() -> ! {
                 defmt::info!("button held should reboot on this");
             }
             ButtonEvent::Clicks(n) if n >= 3 => {
-                defmt::info!("should panic on this");
+                panic!("button {} times - test panic", n);
             }
             ButtonEvent::Clicks(n) => {
                 defmt::info!("clicked {} time(s)", n);

@@ -16,8 +16,7 @@ defmt-serial = "0.14.0"
 usb-device = "0.3"
 usbd-serial = "0.2"
 
-panic-persist = "0.3"
-panic-halt = "1"
+panic-persist = { version = "0.3", features = ["utf8"] }
 rp2040-boot2 = "0.3.0"
 critical-section = "1.2.0"
 static_cell = "2.1.1"
