@@ -1,58 +1,176 @@
 name: CI Checks
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+permissions:
+  contents: read
 
 jobs:
-  building:
-    name: Building
-    continue-on-error: ${{ matrix.experimental || false }}
-    strategy:
-      matrix:
-        rust: [nightly, stable]
-        include:
-          # Nightly is only for reference and allowed to fail
-          - rust: nightly
-            experimental: true
-        os:
-          # Check compilation works on common OSes
-          # (i.e. no path issues)
-          - ubuntu-latest
-          - macOS-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
-          target: thumbv6m-none-eabi
-      - run: cargo install flip-link
-      - run: cargo build --all
-      - run: cargo build --all --release
-  linting:
-    name: Linting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-          target: thumbv6m-none-eabi
-      - run: cargo clippy --all-features -- --deny=warnings
-  formatting:
+  format:
     name: Formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
-          submodules: true
-      - uses: dtolnay/rust-toolchain@stable
-        with:
+          toolchain: 1.98.0
           components: rustfmt
-          target: thumbv6m-none-eabi
-      - run: cargo fmt -- --check
+          targets: thumbv6m-none-eabi
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: clippy
+          targets: thumbv6m-none-eabi
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Clippy
+        run: cargo clippy --locked --target thumbv6m-none-eabi --all-features -- -D warnings
+
+  firmware:
+    name: Firmware Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: thumbv6m-none-eabi
+          components: llvm-tools
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install firmware tools
+        run: |
+          cargo install --locked flip-link
+          cargo install --locked elf2uf2-rs
+          cargo install --locked cargo-binutils
+
+      - name: Verify dependency lockfile
+        run: cargo metadata --locked --no-deps --format-version 1
+
+      - name: Build firmware (debug)
+        run: cargo build --locked --target thumbv6m-none-eabi
+
+      - name: Build firmware (release)
+        run: cargo build --locked --target thumbv6m-none-eabi --release
+
+      - name: Convert release ELF to UF2
+        run: |
+          elf2uf2-rs \
+            target/thumbv6m-none-eabi/release/blinky-plus \
+            blinky-plus.uf2
+
+      - name: Generate size report
+        run: |
+          cargo size --locked --target thumbv6m-none-eabi --release -- -A | tee size.txt
+
+      - name: Check firmware size
+        shell: bash
+        run: |
+          SIZE_LINE=$(cargo size --locked --target thumbv6m-none-eabi --release -- -B | tail -n 1)
+          FLASH_USED=$(awk '{ print $1 + $2 }' <<< "$SIZE_LINE")
+
+          if [[ -z "$FLASH_USED" || "$FLASH_USED" == "0" ]]; then
+            echo "Could not determine firmware text+data size."
+            echo "cargo size output:"
+            cargo size --locked --target thumbv6m-none-eabi --release -- -B
+            exit 1
+          fi
+
+          FLASH_LIMIT=$((2 * 1024 * 1024))
+          FLASH_WARNING=$((FLASH_LIMIT * 90 / 100))
+
+          echo "Firmware text+data: ${FLASH_USED} bytes / ${FLASH_LIMIT} bytes"
+
+          if (( FLASH_USED >= FLASH_LIMIT )); then
+            echo "Firmware exceeds the RP2040's 2 MiB flash budget."
+            exit 1
+          elif (( FLASH_USED >= FLASH_WARNING )); then
+            echo "Warning: firmware uses at least 90% of the 2 MiB flash budget."
+          fi
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: blinky-plus-firmware-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            blinky-plus.uf2
+            target/thumbv6m-none-eabi/release/blinky-plus
+            size.txt
+
+  dependencies:
+    name: Dependency Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify locked dependency graph
+        run: cargo metadata --locked --no-deps --format-version 1
+
+      - name: Report duplicate dependencies
+        run: cargo tree --locked --duplicates
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [format, clippy, firmware, dependencies]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: blinky-plus-firmware-${{ github.sha }}
+          path: release-artifacts
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/blinky-plus.uf2
+            release-artifacts/blinky-plus
+            release-artifacts/size.txt
+          generate_release_notes: true

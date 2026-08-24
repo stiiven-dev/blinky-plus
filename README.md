@@ -96,7 +96,8 @@ main.rs
 
 Everything lives in `main.rs` for this project — it's intentionally small. Later projects in this series split hardware-facing code from host-testable core logic; `blinky-plus` is the template that establishes the tooling (CI, logging, panic capture) those projects build on.
 
-The debounce implementation (`src/debounce.rs`) is the only pure logic in this project and is unit-tested on the host — no hardware needed to run it. Everything else (LED timing, button wiring, panic-persist behavior) needs a real board; there's no hardware-in-the-loop test in this project yet
+The debounce implementation (`src/debounce.rs`) is the only pure logic in this project.
+Everything else (LED timing, button wiring, panic-persist behavior) needs a real board; there's no hardware-in-the-loop test in this project yet
 
 ## Known limitations
 
@@ -106,7 +107,7 @@ The debounce implementation (`src/debounce.rs`) is the only pure logic in this p
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+Dual-licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE), at your option.
 
 ## Acknowledgements
 
