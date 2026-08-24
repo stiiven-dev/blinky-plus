@@ -2,11 +2,7 @@
 
 External LED + button on a Raspberry Pi Pico W, with structured logging and crash reporting over USB — no debug probe required.
 
-<!-- TODO: hero photo of the actual breadboard, well lit, replace this line -->
-`docs/images/breadboard.jpg`
-
-<!-- TODO: 10-15s demo GIF — LED blinking, button press logged, then a deliberate panic and the recovered message on reboot -->
-`docs/images/demo.gif`
+![breadboard image](docs/images/breadboard.jpg)
 
 ---
 
@@ -47,9 +43,6 @@ No debug probe needed for this or any project in this series.
 | GP13 (pin 17) | LED anode, via 330 Ω resistor | cathode to GND |
 | GP12 (pin 16) | Button, other leg to GND | internal pull-up enabled in firmware |
 | GND (pin 38) | Common ground | shared by LED and button |
-
-<!-- TODO: docs/wiring.md with a labeled diagram -->
-See [`docs/wiring.md`](docs/wiring.md) for the full diagram.
 
 The button doubles as the "reboot to bootloader" trigger during development — hold it at boot to drop straight into flash mode without touching BOOTSEL. See [Architecture](#architecture).
 
