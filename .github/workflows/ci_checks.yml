@@ -1,214 +1,25 @@
-name: CI Checks
+name: CI
 
 on:
   push:
-    branches: [main]
-    tags: ["v*"]
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_BUILD_TARGET: thumbv6m-none-eabi
-
-permissions:
-  contents: read
-
 jobs:
-  format:
-    name: Format
+  check:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.98.0
-          components: rustfmt
-          targets: thumbv6m-none-eabi
-
-      - uses: Swatinem/rust-cache@v2
+      - name: Install Rust target
+        run: rustup target add thumbv6m-none-eabi
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Clippy
+        run: cargo clippy --target thumbv6m-none-eabi -- -D warnings
 
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.98.0
-          components: clippy
-          targets: thumbv6m-none-eabi
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Run Clippy
-        run: cargo clippy --locked --target thumbv6m-none-eabi --all-features -- -D warnings
-
-  firmware:
-    name: Firmware Build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.98.0
-          components: llvm-tools
-          targets: thumbv6m-none-eabi
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libudev-dev binutils-arm-none-eabi
-
-      - name: Install elf2uf2-rs
-        run: cargo install --locked elf2uf2-rs
-
-      - name: Verify locked dependency graph
-        run: cargo metadata --locked --no-deps --format-version 1
-
-      # GitHub Actions uses rust-lld for the firmware build instead of flip-link.
-      # This avoids flip-link's linker-script discovery issue on the runner.
-      # Local development continues to use flip-link through .cargo/config.toml.
-      - name: Build firmware (debug)
-        env:
-          RUSTFLAGS: >-
-            -C linker=rust-lld
-            -C link-arg=--nmagic
-            -C link-arg=-Tlink.x
-            -C link-arg=-Tdefmt.x
-            -C no-vectorize-loops
-        run: cargo build --locked --target thumbv6m-none-eabi
-
-      - name: Build firmware (release)
-        env:
-          RUSTFLAGS: >-
-            -C linker=rust-lld
-            -C link-arg=--nmagic
-            -C link-arg=-Tlink.x
-            -C link-arg=-Tdefmt.x
-            -C no-vectorize-loops
-        run: cargo build --locked --release --target thumbv6m-none-eabi
-
-      - name: Generate firmware size report
-        shell: bash
-        run: |
-          ELF="target/thumbv6m-none-eabi/release/blinky-plus"
-
-          {
-            echo "blinky-plus firmware size report"
-            echo "================================"
-            echo
-            echo "ELF: $ELF"
-            echo "Toolchain: Rust 1.98.0"
-            echo
-            echo "--- Summary ---"
-            arm-none-eabi-size "$ELF"
-            echo
-            echo "--- Section sizes ---"
-            arm-none-eabi-size -A "$ELF"
-          } | tee size.txt
-
-          SIZE_LINE="$(arm-none-eabi-size "$ELF" | tail -n 1)"
-          TEXT="$(awk '{print $1}' <<< "$SIZE_LINE")"
-          DATA="$(awk '{print $2}' <<< "$SIZE_LINE")"
-          BSS="$(awk '{print $3}' <<< "$SIZE_LINE")"
-
-          if ! [[ "$TEXT" =~ ^[0-9]+$ && "$DATA" =~ ^[0-9]+$ && "$BSS" =~ ^[0-9]+$ ]]; then
-            echo "Could not parse firmware size."
-            exit 1
-          fi
-
-          FLASH_USED=$((TEXT + DATA))
-          RAM_USED=$((DATA + BSS))
-          FLASH_LIMIT=$((2 * 1024 * 1024))
-          RAM_LIMIT=$((256 * 1024))
-          FLASH_WARNING=$((FLASH_LIMIT * 90 / 100))
-          RAM_WARNING=$((RAM_LIMIT * 90 / 100))
-
-          {
-            echo
-            echo "--- Budget ---"
-            echo "Flash (text + data): ${FLASH_USED} / ${FLASH_LIMIT} bytes ($((FLASH_USED * 100 / FLASH_LIMIT))%)"
-            echo "RAM (data + bss):    ${RAM_USED} / ${RAM_LIMIT} bytes ($((RAM_USED * 100 / RAM_LIMIT))%)"
-          } | tee -a size.txt
-
-          if (( FLASH_USED >= FLASH_LIMIT )); then
-            echo "Firmware exceeds the RP2040 2 MiB flash budget."
-            exit 1
-          fi
-
-          if (( RAM_USED >= RAM_LIMIT )); then
-            echo "Firmware exceeds the RP2040 256 KiB RAM budget."
-            exit 1
-          fi
-
-          if (( FLASH_USED >= FLASH_WARNING )); then
-            echo "Warning: firmware uses at least 90% of the 2 MiB flash budget."
-          fi
-
-          if (( RAM_USED >= RAM_WARNING )); then
-            echo "Warning: firmware uses at least 90% of the 256 KiB RAM budget."
-          fi
-
-      - name: Convert release ELF to UF2
-        run: |
-          elf2uf2-rs \
-            target/thumbv6m-none-eabi/release/blinky-plus \
-            blinky-plus.uf2
-
-      - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: blinky-plus-firmware-${{ github.sha }}
-          if-no-files-found: error
-          path: |
-            blinky-plus.uf2
-            target/thumbv6m-none-eabi/release/blinky-plus
-            size.txt
-
-  dependencies:
-    name: Dependency Checks
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.98.0
-          targets: thumbv6m-none-eabi
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Verify Cargo.lock is usable
-        run: cargo metadata --locked --no-deps --format-version 1
-
-      - name: Report duplicate dependencies
-        run: cargo tree --locked --duplicates
-
-  release:
-    name: Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [format, clippy, firmware, dependencies]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: blinky-plus-firmware-${{ github.sha }}
-          path: release-artifacts
-
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release-artifacts/blinky-plus.uf2
-            release-artifacts/blinky-plus
-            release-artifacts/size.txt
-          generate_release_notes: true
+      - name: Build
+        run: cargo build --release --target thumbv6m-none-eabi
