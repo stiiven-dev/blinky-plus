@@ -15,7 +15,7 @@ use hal::{
     clocks::init_clocks_and_plls, gpio::Pins, pac, sio::Sio, timer::Timer, usb::UsbBus,
     watchdog::Watchdog,
 };
-use rp2040_hal::{self as hal};
+use rp2040_hal::{self as hal, rom_data};
 
 use usb_device::{class_prelude::*, prelude::*};
 use usbd_serial::SerialPort;
@@ -165,7 +165,16 @@ fn main() -> ! {
         let now = timer.get_counter().ticks();
         match button.update(now).unwrap() {
             ButtonEvent::HoldTriggered => {
-                defmt::info!("button held should reboot on this");
+                defmt::warn!("button held — rebooting into flash");
+                // Give the USB writer a chance to flush the log line above
+                // before we reset (best-effort; no delay primitive wired
+                // in yet, so this is a very rough flush attempt).
+                critical_section::with(|cs| {
+                    if let Some((usb_dev, serial)) = USB_STATE.borrow_ref_mut(cs).as_mut() {
+                        usb_dev.poll(&mut [serial]);
+                    }
+                });
+                rom_data::reset_to_usb_boot(0, 0);
             }
             ButtonEvent::Clicks(n) if n >= 3 => {
                 panic!("button {} times - test panic", n);

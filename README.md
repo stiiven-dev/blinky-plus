@@ -26,7 +26,7 @@ External LED + button on a Raspberry Pi Pico W, with structured logging and cras
 - [x] structured logging via defmt.
 - [x] implement debouncer.
 - [x] crash report using panic-persist.
-- [ ] reboot and flash using button instead of BOOTSEL.
+- [x] reboot and flash using button instead of BOOTSEL.
 
 ## Hardware
 
@@ -81,11 +81,11 @@ You should see the LED blinking, a log line on every button press, and a boot ba
 
 ### Try the panic-persist demo
 
-Press the button 3 times or more — this deliberately triggers a panic in `src/main.rs` (see the `debug_panic_after_hold` function) so you can see crash reporting work end-to-end:
+Press the button 3 times or more — this deliberately triggers a panic in `src/main.rs` so you can see crash reporting work end-to-end:
 
 1. Press the button 3 times or more → firmware panics and resets.
 2. On the next boot, the recovered panic message prints first, before the normal boot banner.
-3. Release the button; the board returns to normal blinking.
+3. the board returns to normal blinking.
 
 This is the closest thing to a live backtrace you get without a SWD probe attached — the message is stashed in a reserved RAM region across the reset and read back on boot.
 
