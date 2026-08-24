@@ -15,6 +15,9 @@ jobs:
       - name: Install Rust target
         run: rustup target add thumbv6m-none-eabi
 
+      - name: Install flip-link
+        run: cargo install flip-link --locked
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
